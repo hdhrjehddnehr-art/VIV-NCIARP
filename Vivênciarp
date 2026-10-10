@@ -1,0 +1,831 @@
+--[[
+    PAINEL ADMINISTRATIVO — VIVÊNCIA RP (v5)
+    ✦ Aimbot FOV (com fallback pro mobile)
+    ✦ ESP + ★ NOME DO PLAYER (DisplayName @user, distância, vida)
+    ✦ TP PRO PLAYER + botão flutuante ↩ CONGELADO de VOLTA
+    ✦ Instant Interact
+    ✦ Fly ADM Disfarçado v3
+    ✦ Invisibilidade + Hitbox no Chão
+    ✦ NOCLIP (tecla N + toggle)
+    ✦ Tecla H = limpar visuais
+    ✦ Contador de Staff
+--]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local LP = Players.LocalPlayer
+
+local Rayfield = nil
+pcall(function()
+    Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+if not Rayfield then warn("[Rayfield] não carregou!") return end
+
+--========== ESTADO ==========
+local aimbotAtivo = true
+local fovRaio = 150
+local fovVisivel = true
+local suavizacao = 0.3
+local hitboxAtivo = true
+local tamanhoHitbox = 20
+local espAtivo = true
+local espVerAtraves = true
+local espNomeAtivo = true
+local espInfoAtivo = true
+local instantInteract = true
+local flyAtivo = false
+local flyVelocidade = 40
+local flySuav = 0.06
+local esconderVisual = false
+local espAtivoTemp = true
+local invisivel = false
+local hitboxNoChao = false
+local tamanhoChao = 15
+local nomeTeamStaff = "Staff"
+local noclipAtivo = false
+
+local Window = Rayfield:CreateWindow({
+    Name = "Painel Administrativo — VIVÊNCIA RP",
+    LoadingTitle = "Verificando permissões...",
+    LoadingSubtitle = "Conectando ao serviço de administração",
+    ConfigurationSaving = { Enabled = false },
+    KeySystem = false
+})
+local TabA = Window:CreateTab("Moderação", 4483362458)
+local TabE = Window:CreateTab("Vigilância", 4483362458)
+local TabB = Window:CreateTab("Teleporte Player", 4483362458)
+local TabI = Window:CreateTab("Interação", 4483362458)
+local TabF = Window:CreateTab("Voo Admin", 4483362458)
+local TabH = Window:CreateTab("Hitbox Chão", 4483362458)
+local TabS = Window:CreateTab("Staff", 4483362458)
+local TabD = Window:CreateTab("Sistema", 4483362458)
+
+local function getRoot(pl)
+    local chr = pl.Character
+    return chr and chr:FindFirstChild("HumanoidRootPart")
+end
+
+--=====================================================================
+-- AIMBOT (Moderação)
+--=====================================================================
+TabA:CreateToggle({
+    Name = "Aimbot AUTO (mobile + PC)", CurrentValue = true,
+    Callback = function(v) aimbotAtivo = v end
+})
+TabA:CreateSlider({
+    Name = "FOV do Aimbot", Range = {30, 600}, Increment = 10, Suffix = "px",
+    CurrentValue = 150, Callback = function(v) fovRaio = v end
+})
+TabA:CreateToggle({
+    Name = "Mostrar FOV Circle", CurrentValue = true,
+    Callback = function(v) fovVisivel = v end
+})
+TabA:CreateSlider({
+    Name = "Suavização da mira", Range = {0.05, 1}, Increment = 0.05, Suffix = "x",
+    CurrentValue = 0.3, Callback = function(v) suavizacao = v end
+})
+
+local fovCircle
+local drawingOk = pcall(function()
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Color = Color3.fromRGB(255, 0, 0)
+    fovCircle.Thickness = 2
+    fovCircle.NumSides = 64
+    fovCircle.Filled = false
+end)
+
+local function centroTela()
+    local vp = Camera.ViewportSize
+    return Vector2.new(vp.X / 2, vp.Y / 2)
+end
+
+local function pegarAlvo()
+    local centro = centroTela()
+    local melhor, menorDist = nil, fovRaio
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LP and pl.Character then
+            local hum = pl.Character:FindFirstChildOfClass("Humanoid")
+            local head = pl.Character:FindFirstChild("Head")
+            if hum and hum.Health > 0 and head then
+                local pos, visivel = Camera:WorldToViewportPoint(head.Position)
+                if visivel then
+                    local dist = (Vector2.new(pos.X, pos.Y) - centro).Magnitude
+                    if dist < menorDist then
+                        menorDist = dist
+                        melhor = head
+                    end
+                end
+            end
+        end
+    end
+    return melhor
+end
+
+--=====================================================================
+-- ESP (Vigilância)
+--=====================================================================
+TabE:CreateSection("ESP")
+TabE:CreateToggle({
+    Name = "Ativar ESP (brilho nos players)", CurrentValue = true,
+    Callback = function(v) espAtivo = v end
+})
+TabE:CreateToggle({
+    Name = "Ver através de paredes", CurrentValue = true,
+    Callback = function(v) espVerAtraves = v end
+})
+TabE:CreateToggle({
+    Name = "🏷 Mostrar NOME do player", CurrentValue = true,
+    Callback = function(v) espNomeAtivo = v end
+})
+TabE:CreateToggle({
+    Name = "📏 Mostrar distância + vida", CurrentValue = true,
+    Callback = function(v) espInfoAtivo = v end
+})
+
+local function limparESP(pl)
+    if pl.Character then
+        local h = pl.Character:FindFirstChild("VIV_ESP")
+        if h then h:Destroy() end
+        local tag = pl.Character:FindFirstChild("VIV_ESP_TAG")
+        if tag then tag:Destroy() end
+    end
+end
+
+local function aplicarTag(chr, pl)
+    local head = chr:FindFirstChild("Head")
+    if not head then return end
+
+    local tag = chr:FindFirstChild("VIV_ESP_TAG")
+    if not espNomeAtivo or esconderVisual or not espAtivoTemp or not espAtivo then
+        if tag then tag:Destroy() end
+        return
+    end
+
+    if not tag then
+        tag = Instance.new("BillboardGui")
+        tag.Name = "VIV_ESP_TAG"
+        tag.Adornee = head
+        tag.Size = UDim2.new(0, 200, 0, 60)
+        tag.StudsOffset = Vector3.new(0, 3.2, 0)
+        tag.AlwaysOnTop = true
+        tag.MaxDistance = 2000
+        tag.Parent = chr
+
+        local nome = Instance.new("TextLabel")
+        nome.Name = "Nome"
+        nome.Size = UDim2.new(1, 0, 0, 22)
+        nome.BackgroundTransparency = 1
+        nome.TextColor3 = Color3.fromRGB(255, 255, 255)
+        nome.Font = Enum.Font.GothamBold
+        nome.TextSize = 14
+        nome.TextStrokeTransparency = 0.3
+        nome.TextStrokeColor3 = Color3.new(0, 0, 0)
+        nome.Text = pl.DisplayName .. " (@" .. pl.Name .. ")"
+        nome.Parent = tag
+
+        local info = Instance.new("TextLabel")
+        info.Name = "Info"
+        info.Size = UDim2.new(1, 0, 0, 16)
+        info.Position = UDim2.new(0, 0, 0, 24)
+        info.BackgroundTransparency = 1
+        info.TextColor3 = Color3.fromRGB(120, 255, 120)
+        info.Font = Enum.Font.Gotham
+        info.TextSize = 12
+        info.TextStrokeTransparency = 0.3
+        info.Parent = tag
+    end
+
+    local meuRoot = getRoot(LP)
+    local root = chr:FindFirstChild("HumanoidRootPart")
+    local hum = chr:FindFirstChildOfClass("Humanoid")
+    local infoLbl = tag:FindFirstChild("Info")
+    if infoLbl and espInfoAtivo then
+        local dist = (meuRoot and root) and math.floor((root.Position - meuRoot.Position).Magnitude) or 0
+        local vida = hum and math.floor((hum.Health / math.max(hum.MaxHealth, 1)) * 100) or 0
+        infoLbl.Text = dist .. "m • " .. vida .. "% ❤"
+        infoLbl.Visible = true
+    elseif infoLbl then
+        infoLbl.Visible = false
+    end
+end
+
+local function aplicarESP(pl)
+    if esconderVisual or not espAtivoTemp then
+        limparESP(pl)
+        return
+    end
+    if pl == LP or not pl.Character then return end
+    local chr = pl.Character
+    local root = chr:FindFirstChild("HumanoidRootPart")
+
+    if espAtivo and root then
+        local hl = chr:FindFirstChild("VIV_ESP")
+        if not hl then
+            hl = Instance.new("Highlight")
+            hl.Name = "VIV_ESP"
+            hl.FillColor = Color3.fromRGB(255, 0, 0)
+            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+            hl.FillTransparency = 0.5
+            hl.Parent = chr
+        end
+        hl.DepthMode = espVerAtraves
+            and Enum.HighlightDepthMode.AlwaysOnTop
+            or Enum.HighlightDepthMode.Occluded
+    else
+        limparESP(pl)
+    end
+
+    pcall(function() aplicarTag(chr, pl) end)
+end
+
+--=====================================================================
+-- TP PRO PLAYER + BOTÃO FLUTUANTE ↩ (CONGELADO)
+--=====================================================================
+local lblListaTP = TabB:CreateParagraph({ Title = "Players", Content = "carregando..." })
+local posicaoSalva = nil
+
+local function tpProPlayer(pl)
+    local meuRoot = getRoot(LP)
+    local alvoRoot = getRoot(pl)
+    if not (meuRoot and alvoRoot) then
+        Rayfield:Notify({ Title = "TP", Content = "Sem personagem (você ou ele)!", Duration = 2 })
+        return
+    end
+    posicaoSalva = meuRoot.CFrame -- salva onde você estava
+    meuRoot.CFrame = alvoRoot.CFrame * CFrame.new(0, 0, 3)
+    meuRoot.AssemblyLinearVelocity = Vector3.zero
+    Rayfield:Notify({ Title = "TP", Content = "Teleportado até " .. pl.Name .. " — toque no ↩ pra voltar!", Duration = 3 })
+end
+
+local function voltarPosicao()
+    local meuRoot = getRoot(LP)
+    if not posicaoSalva then
+        Rayfield:Notify({ Title = "TP", Content = "Nenhuma posição salva ainda.", Duration = 2 })
+        return
+    end
+    if not meuRoot then return end
+    meuRoot.CFrame = posicaoSalva
+    meuRoot.AssemblyLinearVelocity = Vector3.zero
+    Rayfield:Notify({ Title = "TP", Content = "Voltou pra posição salva!", Duration = 2 })
+end
+
+local btnsTP = {}
+local function limparBotoes()
+    for _, b in ipairs(btnsTP) do pcall(function() b:Destroy() end) end
+    btnsTP = {}
+end
+
+local function atualizarListaTP()
+    limparBotoes()
+    local nomes = {}
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LP then
+            local playerRef = pl
+            table.insert(btnsTP, TabB:CreateButton({
+                Name = "➤ TP até: " .. playerRef.Name,
+                Callback = function() tpProPlayer(playerRef) end
+            }))
+            table.insert(nomes, playerRef.Name)
+        end
+    end
+    lblListaTP:Set({ Title = "Players", Content = (#nomes > 0 and table.concat(nomes, ", ") or "só você") })
+end
+
+TabB:CreateSection("Teleportar até player")
+TabB:CreateButton({
+    Name = "Atualizar lista",
+    Callback = function() atualizarListaTP() end
+})
+TabB:CreateButton({
+    Name = "↩ Voltar pra posição salva",
+    Callback = function() voltarPosicao() end
+})
+
+Players.PlayerAdded:Connect(function()
+    task.wait(1) atualizarListaTP()
+end)
+Players.PlayerRemoving:Connect(function()
+    task.wait(1) atualizarListaTP()
+end)
+
+--===== BOTÃO FLUTUANTE ↩ — CONGELADO (posição fixa, sem arrastar) =====
+local guiTP = Instance.new("ScreenGui")
+guiTP.Name = "VIV_TPVoltar"
+guiTP.ResetOnSpawn = false
+guiTP.IgnoreGuiInset = true
+guiTP.DisplayOrder = 1001
+guiTP.Parent = LP:WaitForChild("PlayerGui")
+
+local btnVoltar = Instance.new("TextButton")
+btnVoltar.Size = UDim2.new(0, 42, 0, 42)
+btnVoltar.Position = UDim2.new(1, -54, 1, -54) -- CONGELADO no canto inferior direito
+btnVoltar.Text = "↩"
+btnVoltar.TextScaled = true
+btnVoltar.Font = Enum.Font.GothamBold
+btnVoltar.TextColor3 = Color3.new(1, 1, 1)
+btnVoltar.BackgroundColor3 = Color3.fromRGB(220, 90, 30)
+btnVoltar.BorderSizePixel = 0
+btnVoltar.Parent = guiTP
+Instance.new("UICorner", btnVoltar).CornerRadius = UDim.new(1, 0)
+
+btnVoltar.Activated:Connect(function()
+    voltarPosicao()
+end)
+
+--=====================================================================
+-- HITBOX DE EXTREMA DISTÂNCIA
+--=====================================================================
+local function aplicarHitbox(head, gigante)
+    if gigante then
+        head.Size = Vector3.new(tamanhoHitbox, tamanhoHitbox, tamanhoHitbox)
+        head.Transparency = 0.7
+        head.Color = Color3.fromRGB(255, 0, 0)
+        head.Material = Enum.Material.Neon
+        head.CanCollide = false
+        head.Massless = true
+    else
+        head.Size = Vector3.new(1, 1, 1)
+        head.Transparency = 0
+    end
+end
+
+local function vigiarHitbox(pl)
+    pl.CharacterAdded:Connect(function(chr)
+        local head = chr:WaitForChild("Head", 10)
+        if head then
+            task.wait(0.1)
+            pcall(function() aplicarHitbox(head, hitboxAtivo) end)
+        end
+    end)
+end
+
+TabB:CreateToggle({
+    Name = "Hitbox da cabeça expandida", CurrentValue = true,
+    Callback = function(v) hitboxAtivo = v end
+})
+TabB:CreateSlider({
+    Name = "Tamanho da Hitbox", Range = {1, 100}, Increment = 1, Suffix = "st",
+    CurrentValue = 20, Callback = function(v) tamanhoHitbox = v end
+})
+
+local function registrarPlayer(pl)
+    if pl == LP then return end
+    vigiarHitbox(pl)
+    pl.CharacterAdded:Connect(function(chr)
+        task.wait(0.5)
+        aplicarESP(pl)
+    end)
+end
+for _, pl in ipairs(Players:GetPlayers()) do registrarPlayer(pl) end
+Players.PlayerAdded:Connect(function(pl)
+    registrarPlayer(pl)
+    task.wait(1) atualizarListaTP()
+end)
+
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= LP and pl.Character then
+                local head = pl.Character:FindFirstChild("Head")
+                if head then aplicarHitbox(head, hitboxAtivo) end
+                aplicarESP(pl)
+            end
+        end
+    end)
+end)
+
+--=====================================================================
+-- INSTANT INTERACT (Interação)
+--=====================================================================
+TabI:CreateToggle({
+    Name = "Instant Interact (prompt sem espera)", CurrentValue = true,
+    Callback = function(v) instantInteract = v end
+})
+
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        if not instantInteract then return end
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") and obj.Enabled then
+                if obj.HoldDuration ~= 0 then obj.HoldDuration = 0 end
+                if obj.MaxActivationDistance and obj.MaxActivationDistance < 15 then
+                    obj.MaxActivationDistance = 15
+                end
+            end
+        end
+    end)
+end)
+
+--=====================================================================
+-- FLY ADM DISFARÇADO v3 (Voo Admin)
+--=====================================================================
+TabF:CreateSection("Fly Disfarçado v3")
+TabF:CreateToggle({
+    Name = "✈ Ativar Fly (natural)", CurrentValue = false,
+    Callback = function(v)
+        flyAtivo = v
+        if not v then
+            local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end
+        Rayfield:Notify({ Title = "Sistema", Content = v and "Voo habilitado" or "Voo desabilitado", Duration = 2 })
+    end
+})
+TabF:CreateSlider({
+    Name = "Velocidade do voo", Range = {16, 120}, Increment = 2, Suffix = "spd",
+    CurrentValue = 40, Callback = function(v) flyVelocidade = v end
+})
+TabF:CreateSlider({
+    Name = "Aceleração (inércia)", Range = {0.03, 0.15}, Increment = 0.01, Suffix = "x",
+    CurrentValue = 0.06, Callback = function(v) flySuav = v end
+})
+TabF:CreateParagraph({
+    Title = "Como funciona",
+    Content = "Parado no ar: desce devagar. Anda com joystick/WASD normal — voa pra onde olha. Pulo = sobe, Ctrl = desce."
+})
+
+local velAtual = Vector3.zero
+local flyAttachment, flyLinear
+local flyDescendo = false
+
+local function montarFly(root)
+    if flyLinear and flyLinear.Parent then return end
+    flyAttachment = Instance.new("Attachment")
+    flyAttachment.Parent = root
+    flyLinear = Instance.new("LinearVelocity")
+    flyLinear.Attachment0 = flyAttachment
+    flyLinear.MaxForce = 4e5
+    flyLinear.RelativeTo = Enum.ActuatorRelativeTo.World
+    flyLinear.VectorVelocity = Vector3.zero
+    flyLinear.Parent = root
+end
+
+local function desmontarFly()
+    if flyLinear then flyLinear:Destroy() flyLinear = nil end
+    if flyAttachment then flyAttachment:Destroy() flyAttachment = nil end
+    velAtual = Vector3.zero
+end
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if input.KeyCode == Enum.KeyCode.LeftControl then flyDescendo = true end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.LeftControl then flyDescendo = false end
+end)
+
+RunService.RenderStepped:Connect(function(dt)
+    pcall(function()
+        local root = getRoot(LP)
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+
+        if flyAtivo then
+            montarFly(root)
+
+            if hum.FloorMaterial == Enum.Material.Air then
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end
+            hum.AutoRotate = true
+
+            local moveDir = hum.MoveDirection
+            local alvoVel = Vector3.zero
+
+            if moveDir.Magnitude > 0 then
+                local v = Camera.CFrame:VectorToWorldSpace(moveDir)
+                local horiz = Vector3.new(v.X, 0, v.Z)
+                if horiz.Magnitude > 0 then
+                    alvoVel = horiz.Unit * flyVelocidade
+                end
+            end
+
+            if hum.Jump then
+                alvoVel = alvoVel + Vector3.new(0, flyVelocidade * 0.5, 0)
+            end
+            if flyDescendo then
+                alvoVel = alvoVel - Vector3.new(0, flyVelocidade * 0.5, 0)
+            end
+
+            if alvoVel.Magnitude < 1 and velAtual.Y > -flyVelocidade * 0.25 then
+                alvoVel = alvoVel - Vector3.new(0, flyVelocidade * 0.25, 0)
+            end
+
+            velAtual = velAtual:Lerp(alvoVel, math.clamp(flySuav * dt * 60, 0, 1))
+
+            local ray = workspace:Raycast(root.Position, Vector3.new(0, -5, 0))
+            if ray and velAtual.Y < -flyVelocidade * 0.4 then
+                velAtual = Vector3.new(velAtual.X, velAtual.Y * 0.35, velAtual.Z)
+            end
+
+            flyLinear.VectorVelocity = velAtual
+        else
+            desmontarFly()
+        end
+    end)
+end)
+
+--=====================================================================
+-- HITBOX NO CHÃO + INVISIBILIDADE (Hitbox Chão)
+--=====================================================================
+local meuHitboxChao = nil
+
+local function aplicarInvisibilidade(chr, ativo)
+    pcall(function()
+        for _, p in ipairs(chr:GetDescendants()) do
+            if p:IsA("BasePart") or p:IsA("Decal") then
+                if ativo then
+                    p.Transparency = 1
+                    if p:IsA("BasePart") then p.Material = Enum.Material.SmoothPlastic end
+                else
+                    if p.Name ~= "HumanoidRootPart" then p.Transparency = 0 end
+                end
+            end
+        end
+    end)
+end
+
+TabH:CreateSection("Invisibilidade")
+TabH:CreateToggle({
+    Name = "👁 Ficar invisível (ninguém me vê)",
+    CurrentValue = false,
+    Callback = function(v)
+        invisivel = v
+        if LP.Character then aplicarInvisibilidade(LP.Character, v) end
+        Rayfield:Notify({ Title = "Sistema", Content = v and "Você está invisível" or "Visibilidade restaurada", Duration = 2 })
+    end
+})
+
+LP.CharacterAdded:Connect(function(chr)
+    task.wait(0.5)
+    if invisivel then aplicarInvisibilidade(chr, true) end
+end)
+
+TabH:CreateSection("Hitbox no chão")
+TabH:CreateToggle({
+    Name = "🎯 Colocar MINHA hitbox no chão",
+    CurrentValue = false,
+    Callback = function(v)
+        hitboxNoChao = v
+        if v then
+            local root = getRoot(LP)
+            if not root then
+                Rayfield:Notify({ Title = "Sistema", Content = "Sem personagem!", Duration = 2 })
+                return
+            end
+            local ray = workspace:Raycast(root.Position, Vector3.new(0, -50, 0))
+            local pos = ray and ray.Position + Vector3.new(0, tamanhoChao / 2 - 0.5, 0)
+                or Vector3.new(root.Position.X, root.Position.Y - 3, root.Position.Z)
+
+            if meuHitboxChao then meuHitboxChao:Destroy() end
+            meuHitboxChao = Instance.new("Part")
+            meuHitboxChao.Name = "VIV_HitboxChao"
+            meuHitboxChao.Anchored = true
+            meuHitboxChao.CanCollide = false
+            meuHitboxChao.CanTouch = true
+            meuHitboxChao.Massless = true
+            meuHitboxChao.Transparency = 0.85
+            meuHitboxChao.Color = Color3.fromRGB(80, 255, 80)
+            meuHitboxChao.Material = Enum.Material.Neon
+            meuHitboxChao.Size = Vector3.new(tamanhoChao, tamanhoChao, tamanhoChao)
+            meuHitboxChao.Shape = Enum.PartType.Ball
+            meuHitboxChao.CFrame = CFrame.new(pos)
+            meuHitboxChao.Parent = workspace
+
+            local bola = workspace:FindFirstChild("TPS")
+            meuHitboxChao.Touched:Connect(function(hit)
+                pcall(function()
+                    if hitboxNoChao and bola and bola.Parent then
+                        firetouchinterest(bola, meuHitboxChao, 0)
+                        task.wait(0.05)
+                        firetouchinterest(bola, meuHitboxChao, 1)
+                    end
+                end)
+            end)
+
+            Rayfield:Notify({ Title = "Sistema", Content = "Hitbox no chão ATIVA", Duration = 3 })
+        else
+            if meuHitboxChao then meuHitboxChao:Destroy() meuHitboxChao = nil end
+        end
+    end
+})
+TabH:CreateSlider({
+    Name = "Tamanho da hitbox do chão", Range = {4, 50}, Increment = 1, Suffix = "st",
+    CurrentValue = 15, Callback = function(v)
+        tamanhoChao = v
+        if meuHitboxChao then meuHitboxChao.Size = Vector3.new(v, v, v) end
+    end
+})
+TabH:CreateToggle({
+    Name = "Mostrar hitbox (bola verde)", CurrentValue = true,
+    Callback = function(v)
+        if meuHitboxChao then meuHitboxChao.Transparency = v and 0.85 or 1 end
+    end
+})
+TabH:CreateButton({
+    Name = "Mover hitbox pra ONDE ESTOU agora",
+    Callback = function()
+        local root = getRoot(LP)
+        if not root or not meuHitboxChao then return end
+        local ray = workspace:Raycast(root.Position, Vector3.new(0, -50, 0))
+        local pos = ray and ray.Position + Vector3.new(0, tamanhoChao / 2 - 0.5, 0)
+            or Vector3.new(root.Position.X, root.Position.Y - 3, root.Position.Z)
+        meuHitboxChao.CFrame = CFrame.new(pos)
+        Rayfield:Notify({ Title = "Sistema", Content = "Hitbox movida!", Duration = 2 })
+    end
+})
+
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        if not hitboxNoChao or not meuHitboxChao then return end
+        local root = getRoot(LP)
+        if not root then return end
+        local ray = workspace:Raycast(root.Position, Vector3.new(0, -50, 0))
+        local pos = ray and ray.Position + Vector3.new(0, tamanhoChao / 2 - 0.5, 0)
+            or Vector3.new(root.Position.X, root.Position.Y - 3, root.Position.Z)
+        meuHitboxChao.CFrame = CFrame.new(pos)
+    end)
+end)
+
+--=====================================================================
+-- NOCLIP (Sistema) — tecla N + toggle
+--=====================================================================
+TabD:CreateSection("Noclip")
+TabD:CreateToggle({
+    Name = "🧊 NOCLIP (atravessar tudo)",
+    CurrentValue = false,
+    Callback = function(v)
+        noclipAtivo = v
+        if not v then
+            pcall(function()
+                local chr = LP.Character
+                if chr then
+                    for _, p in ipairs(chr:GetDescendants()) do
+                        if p:IsA("BasePart") then p.CanCollide = true end
+                    end
+                end
+            end)
+        end
+        Rayfield:Notify({
+            Title = "Noclip",
+            Content = v and "ON — atravessando tudo!" or "OFF — colisão restaurada.",
+            Duration = 2
+        })
+    end
+})
+TabD:CreateParagraph({
+    Title = "Atalho",
+    Content = "Tecla N = liga/desliga na hora (PC). No mobile usa o toggle. Combina com o Fly pra atravessar paredes voando."
+})
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if input.KeyCode == Enum.KeyCode.N and not gpe then
+        noclipAtivo = not noclipAtivo
+        if not noclipAtivo then
+            pcall(function()
+                local chr = LP.Character
+                if chr then
+                    for _, p in ipairs(chr:GetDescendants()) do
+                        if p:IsA("BasePart") then p.CanCollide = true end
+                    end
+                end
+            end)
+        end
+        Rayfield:Notify({
+            Title = "Noclip",
+            Content = noclipAtivo and "ON" or "OFF",
+            Duration = 1
+        })
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    if not noclipAtivo then return end
+    pcall(function()
+        local chr = LP.Character
+        if not chr then return end
+        for _, p in ipairs(chr:GetDescendants()) do
+            if p:IsA("BasePart") then
+                p.CanCollide = false
+            end
+        end
+    end)
+end)
+
+LP.CharacterAdded:Connect(function(chr)
+    task.wait(0.3)
+    if noclipAtivo then
+        pcall(function()
+            for _, p in ipairs(chr:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end
+        end)
+    end
+end)
+
+--=====================================================================
+-- STAFF (Contador)
+--=====================================================================
+local staffGui = Instance.new("ScreenGui")
+staffGui.Name = "VIV_StaffCounter"
+staffGui.ResetOnSpawn = false
+staffGui.IgnoreGuiInset = true
+staffGui.DisplayOrder = 1000
+staffGui.Parent = LP:WaitForChild("PlayerGui")
+
+local lblStaff = Instance.new("TextLabel")
+lblStaff.Size = UDim2.new(0, 170, 0, 26)
+lblStaff.Position = UDim2.new(0, 10, 0, 8)
+lblStaff.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+lblStaff.BackgroundTransparency = 0.5
+lblStaff.TextColor3 = Color3.fromRGB(255, 80, 80)
+lblStaff.Font = Enum.Font.GothamBold
+lblStaff.TextSize = 13
+lblStaff.Text = "Staff: 0"
+Instance.new("UICorner", lblStaff).CornerRadius = UDim.new(0, 6)
+lblStaff.Parent = staffGui
+
+TabS:CreateSection("Contador de Staff")
+TabS:CreateInput({
+    Name = "Nome do team Staff",
+    PlaceholderText = "Staff",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(txt)
+        if txt ~= "" then nomeTeamStaff = txt end
+    end
+})
+TabS:CreateToggle({
+    Name = "Mostrar contador na tela", CurrentValue = true,
+    Callback = function(v) staffGui.Enabled = v end
+})
+
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            local count, nomes = 0, {}
+            for _, pl in ipairs(Players:GetPlayers()) do
+                if pl.Team and pl.Team.Name:lower():find(nomeTeamStaff:lower()) then
+                    count = count + 1
+                    table.insert(nomes, pl.Name)
+                end
+            end
+            lblStaff.Text = count > 0
+                and ("Staff: " .. count .. " — " .. table.concat(nomes, ", "))
+                or "Staff: 0"
+        end)
+    end
+end)
+
+--=====================================================================
+-- SISTEMA (tecla H de emergência)
+--=====================================================================
+TabD:CreateSection("Camuflagem rápida")
+TabD:CreateParagraph({
+    Title = "Tecla de emergência",
+    Content = "Aperta H: ESP, nomes, FOV e hitbox do chão desaparecem na hora. Aperta H de novo pra voltar."
+})
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if input.KeyCode == Enum.KeyCode.H then
+        esconderVisual = not esconderVisual
+        fovVisivel = not esconderVisual
+        espAtivoTemp = not esconderVisual
+        if meuHitboxChao then
+            meuHitboxChao.Transparency = esconderVisual and 1 or 0.85
+        end
+        Rayfield:Notify({
+            Title = "Sistema",
+            Content = esconderVisual and "Modo limpo ATIVADO" or "Visuais restaurados",
+            Duration = 2
+        })
+    end
+end)
+
+--=====================================================================
+-- AIMBOT LOOP
+--=====================================================================
+RunService.RenderStepped:Connect(function()
+    pcall(function()
+        if drawingOk and fovCircle then
+            fovCircle.Radius = fovRaio
+            fovCircle.Position = centroTela()
+            fovCircle.Visible = fovVisivel and aimbotAtivo and not esconderVisual
+        end
+        if not aimbotAtivo then return end
+        local alvo = pegarAlvo()
+        if not alvo then return end
+        local alvoCF = CFrame.new(Camera.CFrame.Position, alvo.Position)
+        Camera.CFrame = Camera.CFrame:Lerp(alvoCF, suavizacao)
+    end)
+end)
+
+--=====================================================================
+-- INICIAR
+--=====================================================================
+atualizarListaTP()
+
+Rayfield:Notify({
+    Title = "Painel Administrativo v5",
+    Content = "Carregado! TP pro player + botão ↩ CONGELADO + ESP + Noclip + Fly v3 + tecla H.",
+    Duration = 5
+})
